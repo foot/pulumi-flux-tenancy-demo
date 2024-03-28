@@ -28,13 +28,13 @@ class TenantResource extends pulumi.ComponentResource {
   ) {
     super("flux:tenancy:Tenant", name, args, opts);
 
-    const resourceName = (key: string) => `${args.name}-${key}`;
-    const repoName = resourceName("workspace");
+    const childResourceName = (key: string) => `${args.name}-${key}`;
+    const repoName = childResourceName("workspace");
     const baseOptions: pulumi.ComponentResourceOptions = { parent: this };
 
     // Generate ssh keys
     const key = new tls.PrivateKey(
-      resourceName("private-key"),
+      childResourceName("private-key"),
       {
         algorithm: "ECDSA",
         ecdsaCurve: "P256",
@@ -44,7 +44,7 @@ class TenantResource extends pulumi.ComponentResource {
 
     // Create Github repository
     this.gitRepository = new github.Repository(
-      resourceName("repository"),
+      childResourceName("repository"),
       {
         name: repoName,
         visibility: "private",
@@ -54,7 +54,7 @@ class TenantResource extends pulumi.ComponentResource {
     );
 
     new github.RepositoryDeployKey(
-      resourceName("repository-deploy-key"),
+      childResourceName("repository-deploy-key"),
       {
         title: "fluxcd",
         repository: this.gitRepository.name,
@@ -65,7 +65,7 @@ class TenantResource extends pulumi.ComponentResource {
     );
 
     new github.BranchDefault(
-      resourceName("branch-default"),
+      childResourceName("branch-default"),
       {
         repository: this.gitRepository.name,
         branch,
@@ -73,10 +73,10 @@ class TenantResource extends pulumi.ComponentResource {
       { ...baseOptions, dependsOn: this.gitRepository }
     );
 
-    const fluxSecretName = resourceName("flux-secret");
+    const fluxSecretName = childResourceName("flux-secret");
 
     new k8s.core.v1.Secret(
-      resourceName("flux-secret"),
+      childResourceName("flux-secret"),
       {
         metadata: {
           name: fluxSecretName,
@@ -94,7 +94,7 @@ class TenantResource extends pulumi.ComponentResource {
     // add ks and source
     flux
       .getFluxSync({
-        name: resourceName("automation"),
+        name: childResourceName("automation"),
         targetPath: "clusters/my-cluster",
         url: `ssh://git@github.com/${githubOwner}/${repoName}.git`,
         branch: branch,
@@ -103,7 +103,7 @@ class TenantResource extends pulumi.ComponentResource {
       .then((fluxSync) => {
         // TODO: needs to depend on flux bootstrap.
         new k8s.yaml.ConfigGroup(
-          resourceName("flux-sync"),
+          childResourceName("flux-sync"),
           {
             yaml: fluxSync.content,
           },
@@ -121,70 +121,111 @@ const branch = "main";
 const path = "kubernetes";
 const githubOwner = "foot-org";
 
-function setupAdmin() {
-  const repoName = "workspace-admin";
-  const resourceName = (key: string) => `${repoName}-${key}`;
-
-  // Generate ssh keys
-  const key = new tls.PrivateKey(resourceName("private-key"), {
-    algorithm: "ECDSA",
-    ecdsaCurve: "P256",
-  });
-
-  // Create Github repository
-  const repo = new github.Repository(resourceName("repository"), {
-    name: repoName,
-    visibility: "private",
-    autoInit: true,
-  });
-
-  new github.BranchDefault(resourceName("branch-default"), {
-    repository: repo.name,
-    branch,
-  });
-
-  // Add generated public key to Github deploy key
-  const deployKey = new github.RepositoryDeployKey(
-    resourceName("repository-deploy-key"),
-    {
-      title: "fluxcd",
-      repository: repo.name,
-      key: key.publicKeyOpenssh,
-      readOnly: false,
-    }
-  );
-
-  const provider = new flux.Provider("flux", {
-    kubernetes: {
-      configPath: "~/.kube/config",
-    },
-    git: {
-      url: `ssh://git@github.com/${githubOwner}/${repoName}.git`,
-      branch,
-      ssh: {
-        username: "git",
-        privateKey: key.privateKeyPem,
-      },
-    },
-  });
-
-  const resource = new flux.FluxBootstrapGit(
-    "flux",
-    {
-      path: path,
-    },
-    {
-      provider: provider,
-      dependsOn: deployKey,
-    }
-  );
+interface TenantSystemArgs {
+  // name: string;
+  // namespaces: string[];
 }
 
-setupAdmin();
+class TenantSystem extends pulumi.ComponentResource {
+  public readonly gitRepository: github.Repository;
 
-const tenant = new TenantResource("ai-team", {
-  name: "ai-team",
-  namespaces: ["ai", "observability"],
-});
+  constructor(
+    name: string,
+    args: TenantSystemArgs,
+    opts?: pulumi.ComponentResourceOptions
+  ) {
+    super("flux:tenancy:TenantSystem", name, args, opts);
+    const baseOptions: pulumi.ComponentResourceOptions = { parent: this };
+
+    const repoName = "workspace-admin";
+    const childResourceName = (key: string) => `${repoName}-${key}`;
+
+    // Generate ssh keys
+    const key = new tls.PrivateKey(
+      childResourceName("private-key"),
+      {
+        algorithm: "ECDSA",
+        ecdsaCurve: "P256",
+      },
+      baseOptions
+    );
+
+    // Create Github repository
+    this.gitRepository = new github.Repository(
+      childResourceName("repository"),
+      {
+        name: repoName,
+        visibility: "private",
+        autoInit: true,
+      },
+      baseOptions
+    );
+
+    new github.BranchDefault(
+      childResourceName("branch-default"),
+      {
+        repository: this.gitRepository.name,
+        branch,
+      },
+      baseOptions
+    );
+
+    // Add generated public key to Github deploy key
+    const deployKey = new github.RepositoryDeployKey(
+      childResourceName("repository-deploy-key"),
+      {
+        title: "fluxcd",
+        repository: this.gitRepository.name,
+        key: key.publicKeyOpenssh,
+        readOnly: false,
+      },
+      baseOptions
+    );
+
+    const provider = new flux.Provider(
+      "flux",
+      {
+        kubernetes: {
+          configPath: "~/.kube/config",
+        },
+        git: {
+          url: `ssh://git@github.com/${githubOwner}/${repoName}.git`,
+          branch,
+          ssh: {
+            username: "git",
+            privateKey: key.privateKeyPem,
+          },
+        },
+      },
+      baseOptions
+    );
+
+    new flux.FluxBootstrapGit(
+      "flux",
+      {
+        path: path,
+      },
+      {
+        ...baseOptions,
+        provider: provider,
+        dependsOn: deployKey,
+      }
+    );
+
+    this.registerOutputs();
+  }
+}
+
+const tenantSystem = new TenantSystem("acme-corp-tenants", {});
+
+const tenant = new TenantResource(
+  "ai-team",
+  {
+    name: "ai-team",
+    namespaces: ["ai", "observability", "logging"],
+  },
+  { dependsOn: tenantSystem }
+);
 
 export const gitRepositoryName = tenant.gitRepository.name;
+export const tenantSystemGitRepositoryName = tenantSystem.gitRepository.name;
