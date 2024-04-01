@@ -1,3 +1,12 @@
 encryptionsalt: v1:wDPT6oIZJio=:v1:Q0yYtxP8Bgq/0b7U:ux14diNwakzADevugT6HMsKE4txwOQ==
 config:
   github:owner: foot-org
+  tenancy:tenants:
+    - name: ai-team
+      namespaces:
+        - name: ai
+        - name: observability
+        - name: logging
+      githubTeams:
+        - name: ai-team
+        - name: billing-team
